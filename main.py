@@ -29,58 +29,64 @@ class VkUser:
         self.age = age
         self.city = city
         self.sex = sex
-
-    def insert_into_table(self):
         try:
             cur.execute(f'INSERT INTO BOT_USERS (ID, AGE, CITY, SEX) VALUES ({str(self.id)},'
                         f'{str(self.age)},{self.city},{str(self.sex)})')
         except psycopg2.errors.UniqueViolation:
             pass
-        return con.commit()
+        con.commit()
 
     def update_data(self):
         u_data = vk.method('users.get', {'user_id': self.id, 'fields': "sex,city,bdate"})[0]
-        print(u_data)
         for data in u_data:
             if data == 'sex':
-                cur.execute(f'''UPDATE BOT_USERS SET sex={u_data[data]} WHERE id={self.id}''')
-                self.sex = u_data[data]
+                correct_sex = self.get_data('sex') if self.get_data('sex') else u_data[data]
+                cur.execute(f"UPDATE BOT_USERS SET sex={correct_sex} WHERE id={self.id}")
+                self.sex = correct_sex
             if data == 'bdate':
                 age = calculate_age(u_data[data])
-                cur.execute(f'''UPDATE BOT_USERS SET age={age} WHERE id={self.id}''')
-                self.age = age
+                correct_age = self.get_data('age') if self.get_data('age') else age
+                cur.execute(f"UPDATE BOT_USERS SET age={correct_age} WHERE id={self.id}")
+                self.age = correct_age
             if data == 'city':
-                cur.execute(f'''UPDATE BOT_USERS SET city={u_data[data]['id']} WHERE id={self.id}''')
-                self.city = u_data[data]['id']
+                correct_city = self.get_data('city') if self.get_data('city') else u_data[data]['id']
+                cur.execute(f"UPDATE BOT_USERS SET city={correct_city} WHERE id={self.id}")
+                self.city = correct_city
         return con.commit()
 
-    def get_data(self):
-        cur.execute(f"SELECT ID, SEX, AGE, CITY FROM BOT_USERS WHERE ID={self.id}")
-        return cur.fetchall()
+    def get_data(self, data):
+        cur.execute(f"SELECT {data} FROM BOT_USERS WHERE ID={self.id}")
+        return cur.fetchone()[0]
 
     def ask_the_data(self):
         for data in self.__dict__.items():
-            if data[1] == 0 and data[0] == 'age':
+            if not data[1] and data[0] == 'age':
                 self.write_msg(f"Сколько тебе лет?")
                 age = wait_reply()
                 while int(age) <= 0:
                     self.write_msg(f"Некорректный возраст. Повтори ещё раз, пожалуйста.")
+                    age = wait_reply()
                 cur.execute(f'''UPDATE BOT_USERS SET age={age} WHERE id={self.id}''')
-            if data[1] not in supported_cities and data[0] == 'city':
+            if not data[1] not in supported_cities.values() and data[0] == 'city':
+                print(data[1])
                 self.write_msg(f"Из какого ты города?\nПоддерживаемые города: " + ", ".join(supported_cities.keys()))
                 city = wait_reply()
-                while not city:
-                    if city not in supported_cities:
-                        self.write_msg(f"К сожалению, данный город не поддерживается.")
-                    city = False
+                while city.capitalize() not in supported_cities.keys():
+                    self.write_msg(f"К сожалению, данный город не поддерживается.\nПоддерживаемые города: "
+                                   + ", ".join(supported_cities.keys()))
+                    city = wait_reply()
                 self.write_msg(f'Хорошо, твой город ' + city)
+                print(supported_cities[city])
                 cur.execute(f'''UPDATE BOT_USERS SET city={supported_cities[city]} WHERE id={self.id}''')
-            if data[1] == 0 and data[0] == 'sex':
-                self.write_msg(f"Какого ты пола?")
+            if not data[1] and data[0] == 'sex':
+                self.write_msg(f"Какого ты пола? Ж/М")
                 sex = wait_reply()
-                while int(sex) <= 0:
-                    self.write_msg(f"Некорректный возраст. Повтори ещё раз, пожалуйста.")
-                cur.execute(f'''UPDATE BOT_USERS SET sex={sex} WHERE id={self.id}''')
+                while sex.lower() not in ["ж", "м"]:
+                    self.write_msg(f"Некорректный пол. Пожалуйста, ответь 'Ж' или 'М'")
+                    sex = wait_reply()
+                self.write_msg(f"Установлен пол  {'Женский' if sex.lower() == 'ж' else 'Мужской'}")
+                cur.execute(f'''UPDATE BOT_USERS SET sex={'1' if sex == 'ж' else '2'} WHERE id={self.id}''')
+            con.commit()
 
     def get_user_name(self):
         return vk.method('users.get', {'user_id': self.id})[0]['first_name']
@@ -106,9 +112,12 @@ def get_russian_cities():
 
 
 def calculate_age(born):
-    born = datetime.strptime(born, '%d.%m.%Y')
-    today = date.today()
-    return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+    try:
+        born = datetime.strptime(born, '%d.%m.%Y')
+        today = date.today()
+        return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+    except ValueError:
+        return 0
 
 
 def main():
@@ -119,7 +128,6 @@ def main():
                 request = event.text
                 uid = event.user_id
                 vku = VkUser(uid)
-                vku.insert_into_table()
                 if request.lower() == "1":
                     vku.write_msg(f"Хай, {vku.get_user_name()}")
                     vku = VkUser(uid)
